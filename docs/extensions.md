@@ -18,6 +18,10 @@ Pin a specific version:
     mdbook.toolchain(mdbook_version = "0.5.2", mermaid_version = "0.17.0")
     use_repo(mdbook, "mdbook", "mdbook_mermaid")
 
+Release fetching is delegated to
+`@rules_github//github:repositories.bzl%github_binary_repository`
+so all our rules_* repos share one URL-shape + sha-pinning impl.
+
 <a id="mdbook"></a>
 
 ## mdbook

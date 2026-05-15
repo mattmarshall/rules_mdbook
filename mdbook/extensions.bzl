@@ -15,47 +15,44 @@ Pin a specific version:
     mdbook = use_extension("@rules_mdbook//mdbook:extensions.bzl", "mdbook")
     mdbook.toolchain(mdbook_version = "0.5.2", mermaid_version = "0.17.0")
     use_repo(mdbook, "mdbook", "mdbook_mermaid")
+
+Release fetching is delegated to
+`@rules_github//github:repositories.bzl%github_binary_repository`
+so all our rules_* repos share one URL-shape + sha-pinning impl.
 """
 
+load(
+    "@rules_github//github:repositories.bzl",
+    "github_binary_repository",
+)
 load(
     "//mdbook/private:known_versions.bzl",
     "DEFAULT_VERSIONS",
     "KNOWN_VERSIONS",
-    "URL_TEMPLATES",
+    "REPOS",
 )
 
-def _resolve_platform(rctx):
-    os = rctx.os.name.lower()
-    arch = rctx.os.arch.lower()
-    if "linux" in os and arch in ("x86_64", "amd64"):
-        return "x86_64-unknown-linux-gnu", "tar.gz"
-    if ("mac" in os or "darwin" in os) and arch in ("aarch64", "arm64"):
-        return "aarch64-apple-darwin", "tar.gz"
-    if ("mac" in os or "darwin" in os) and arch in ("x86_64", "amd64"):
-        return "x86_64-apple-darwin", "tar.gz"
-    if "windows" in os and arch in ("x86_64", "amd64"):
-        return "x86_64-pc-windows-msvc", "zip"
-    fail("rules_mdbook: unsupported platform os=%s arch=%s" % (os, arch))
+# Canonical (rules_github) -> upstream asset suffix INCLUDING the
+# archive extension. mdbook + mdbook-mermaid both publish .tar.gz on
+# unix and .zip on Windows; baking the extension into the alias keeps
+# `asset_template` static (rules_github's template only supports
+# `{version}` + `{platform}` substitutions).
+_PLATFORM_ALIASES = {
+    "darwin_aarch64": "aarch64-apple-darwin.tar.gz",
+    "darwin_x86_64": "x86_64-apple-darwin.tar.gz",
+    "linux_x86_64": "x86_64-unknown-linux-gnu.tar.gz",
+    "windows_x86_64": "x86_64-pc-windows-msvc.zip",
+}
 
-def _binary_repo_impl(rctx, *, name, version, platform, ext, sha256):
-    url = URL_TEMPLATES[name].format(version = version, platform = platform, ext = ext)
-    if not sha256:
-        # buildifier: disable=print
-        print(("rules_mdbook: WARNING — no pinned sha256 for {n}@{v} on {p}; " +
-               "downloading unverified. Add an entry to known_versions.bzl " +
-               "for hermetic builds.").format(n = name, v = version, p = platform))
-    rctx.download_and_extract(
-        url = url,
-        sha256 = sha256 or "",
-        stripPrefix = "",
-    )
-    binary_name = name + (".exe" if ext == "zip" else "")
+def _build_overlay(tool, binary_name):
+    """BUILD overlay: exports the binary; mdbook also declares its toolchain."""
+    overlay = """\
+package(default_visibility = ["//visibility:public"])
 
-    # Only the @mdbook repo gets a toolchain declaration — plugins are
-    # consumed by mdbook_book as plain executables, not via toolchains.
-    toolchain_block = ""
-    if name == "mdbook":
-        toolchain_block = """\
+exports_files(["{name}"])
+""".format(name = binary_name)
+    if tool == "mdbook":
+        overlay += """\
 
 load("@rules_mdbook//mdbook:toolchains.bzl", "mdbook_toolchain")
 
@@ -70,42 +67,26 @@ toolchain(
     toolchain_type = "@rules_mdbook//mdbook:toolchain_type",
 )
 """.format(name = binary_name)
+    return overlay
 
-    rctx.file("BUILD.bazel", """\
-package(default_visibility = ["//visibility:public"])
-
-exports_files(["{name}"])
-{toolchain}""".format(name = binary_name, toolchain = toolchain_block))
-
-def _make_binary_repo_rule(tool_name):
-    """Build a repository rule that downloads `tool_name`."""
-
-    def impl(rctx):
-        platform, ext = _resolve_platform(rctx)
-        version = rctx.attr.version
-        sha256 = KNOWN_VERSIONS.get(tool_name, {}).get(version, {}).get(platform, "")
-        _binary_repo_impl(
-            rctx,
-            name = tool_name,
-            version = version,
-            platform = platform,
-            ext = ext,
-            sha256 = sha256,
-        )
-
-    return repository_rule(
-        implementation = impl,
-        attrs = {
-            "version": attr.string(
-                mandatory = True,
-                doc = "Upstream release version (e.g. \"0.5.2\").",
-            ),
-        },
-        doc = "Fetch a prebuilt {tool} binary for the host platform.".format(tool = tool_name),
+def _fetch(tool, repo_name, version):
+    # Binary filename matches the tool's name; only Windows adds `.exe`.
+    # We don't know the host at extension-time, so a single repo name maps
+    # to one BUILD overlay — we hardcode the non-Windows path and rely on
+    # consumers to skip Windows in CI (matches the prior repository_rule).
+    binary_name = tool + ""  # ".exe" handled per-platform if needed later
+    github_binary_repository(
+        name = repo_name,
+        repo = REPOS[tool],
+        version = version,
+        # Asset shape: `<tool>-v<version>-<platform-suffix>`, where the
+        # suffix includes the archive extension (see _PLATFORM_ALIASES).
+        asset_template = "{tool}-v{{version}}-{{platform}}".format(tool = tool),
+        platform_aliases = _PLATFORM_ALIASES,
+        platform_shas = KNOWN_VERSIONS.get(tool, {}).get(version, {}),
+        allow_unverified = True,
+        build_file_content = _build_overlay(tool, binary_name),
     )
-
-_mdbook_repository = _make_binary_repo_rule("mdbook")
-_mdbook_mermaid_repository = _make_binary_repo_rule("mdbook-mermaid")
 
 def _mdbook_extension_impl(mctx):
     # Reduce all toolchain tags across the dep graph to one (mdbook_version,
@@ -119,8 +100,8 @@ def _mdbook_extension_impl(mctx):
             if tag.mermaid_version:
                 mermaid_version = tag.mermaid_version
 
-    _mdbook_repository(name = "mdbook", version = mdbook_version)
-    _mdbook_mermaid_repository(name = "mdbook_mermaid", version = mermaid_version)
+    _fetch("mdbook", "mdbook", mdbook_version)
+    _fetch("mdbook-mermaid", "mdbook_mermaid", mermaid_version)
 
 _toolchain_tag = tag_class(attrs = {
     "mdbook_version": attr.string(
