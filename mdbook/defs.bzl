@@ -72,7 +72,10 @@ mkdir -p "$STAGE/bin"
 cp "{book_toml}" "$STAGE/book.toml"
 
 """.format(book_toml = book_toml.path) + "\n".join([
-        'mkdir -p "$STAGE/$(dirname "{rel}")"\ncp "{src}" "$STAGE/{rel}"'.format(
+        # Tree artifacts (a directory produced by an upstream rule — e.g. a
+        # rule that stages a generated chapter tree) are copied recursively;
+        # plain files are copied to their computed relative path.
+        ('mkdir -p "$STAGE/{rel}"\ncp -RL "{src}/." "$STAGE/{rel}/"' if f.is_directory else 'mkdir -p "$STAGE/$(dirname "{rel}")"\ncp "{src}" "$STAGE/{rel}"').format(
             src = f.path,
             rel = rel,
         )
@@ -128,7 +131,10 @@ mdbook_book = rule(
             allow_files = True,
             mandatory = True,
             doc = "All source files (Markdown, SUMMARY.md, theme assets, etc.). " +
-                  "Each file is staged at its package-relative path minus `src_strip_prefix`.",
+                  "Each file is staged at its package-relative path minus `src_strip_prefix`. " +
+                  "A directory (tree artifact produced by an upstream rule) is copied " +
+                  "recursively into its computed relative path, so a rule that stages a " +
+                  "generated chapter tree can feed it here directly.",
         ),
         "src_strip_prefix": attr.string(
             default = "",

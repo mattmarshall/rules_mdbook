@@ -30,7 +30,7 @@ Run `mdbook build` over a staged source tree and produce an HTML tarball.
 | Name  | Description | Type | Mandatory | Default |
 | :------------- | :------------- | :------------- | :------------- | :------------- |
 | <a id="mdbook_book-name"></a>name |  A unique name for this target.   | <a href="https://bazel.build/concepts/labels#target-names">Name</a> | required |  |
-| <a id="mdbook_book-srcs"></a>srcs |  All source files (Markdown, SUMMARY.md, theme assets, etc.). Each file is staged at its package-relative path minus `src_strip_prefix`.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | required |  |
+| <a id="mdbook_book-srcs"></a>srcs |  All source files (Markdown, SUMMARY.md, theme assets, etc.). Each file is staged at its package-relative path minus `src_strip_prefix`. A directory (tree artifact produced by an upstream rule) is copied recursively into its computed relative path, so a rule that stages a generated chapter tree can feed it here directly.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | required |  |
 | <a id="mdbook_book-out"></a>out |  The rendered site, packaged as a `.tar.gz`.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="mdbook_book-book_toml"></a>book_toml |  The mdbook configuration file. Staged at the root of the build sandbox.   | <a href="https://bazel.build/concepts/labels">Label</a> | required |  |
 | <a id="mdbook_book-plugins"></a>plugins |  mdbook plugin executables (e.g. `@mdbook_mermaid//:mdbook-mermaid`). Staged onto PATH so mdbook can resolve them by bare name.   | <a href="https://bazel.build/concepts/labels">List of labels</a> | optional |  `[]`  |
